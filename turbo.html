@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ターボ君のゲーム</title>
+    <style>
+        #game-board {
+            display: grid;
+            grid-template-columns: repeat(9, 30px);
+            gap: 2px;
+        }
+        .cell {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+        .visited {
+            background-color: #90EE90;
+        }
+        .monster {
+            background-color: #FF6347;
+        }
+        .current {
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>ターボ君のゲーム</h1>
+    <div id="game-board"></div>
+    <p id="message"></p>
+    <p id="attempt-count"></p>
+    <button id="restart">新しいゲーム</button>
+    <button id="retry" style="display:none;">再挑戦</button>
+
+    <script>
+        const rows = 10;
+        const cols = 9;
+        const monsterCount = 8;
+        let board = [];
+        let visited = [];
+        let revealedMonsters = [];
+        let currentPosition = { row: 0, col: 0 };
+        let gameOver = false;
+        let attemptCount = 1;
+
+        function initializeGame() {
+            board = Array(rows).fill().map(() => Array(cols).fill(false));
+            resetVisited();
+            revealedMonsters = Array(rows).fill().map(() => Array(cols).fill(false));
+            currentPosition = { row: 0, col: 0 };
+            gameOver = false;
+            attemptCount = 1;
+
+            generateMonsters();
+            renderBoard();
+            updateMessage('ゲーム開始！カタツムリをクリックして動かしてください。');
+            updateAttemptCount();
+            document.getElementById('retry').style.display = 'none';
+        }
+
+        function resetVisited() {
+            visited = Array(rows).fill().map(() => Array(cols).fill(false));
+            visited[0][0] = true;
+        }
+
+        function generateMonsters() {
+            let availableColumns = Array.from({length: cols}, (_, i) => i);
+            for (let row = 1; row < rows - 1; row++) {
+                if (availableColumns.length === 0) break;
+                const randomIndex = Math.floor(Math.random() * availableColumns.length);
+                const col = availableColumns[randomIndex];
+                board[row][col] = true;
+                availableColumns.splice(randomIndex, 1);
+            }
+        }
+
+        function renderBoard() {
+            const gameBoard = document.getElementById('game-board');
+            gameBoard.innerHTML = '';
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    if (visited[i][j]) {
+                        cell.classList.add('visited');
+                    }
+                    if (revealedMonsters[i][j]) {
+                        cell.classList.add('monster');
+                    }
+                    if (i === currentPosition.row && j === currentPosition.col) {
+                        cell.classList.add('current');
+                        cell.textContent = '🐌';
+                    }
+                    cell.addEventListener('click', () => cellClick(i, j));
+                    gameBoard.appendChild(cell);
+                }
+            }
+        }
+
+        function cellClick(row, col) {
+            if (gameOver) return;
+            if (!isValidMove(row, col)) return;
+
+            currentPosition = { row, col };
+            visited[row][col] = true;
+
+            if (board[row][col]) {
+                gameOver = true;
+                revealedMonsters[row][col] = true;
+                updateMessage('挑戦失敗！モンスターに捕まりました。');
+                document.getElementById('retry').style.display = 'inline';
+            } else if (row === rows - 1) {
+                gameOver = true;
+                updateMessage('ゲームクリア！おめでとうございます！');
+                revealAllMonsters();
+            }
+
+            renderBoard();
+        }
+
+        function isValidMove(row, col) {
+            const { row: currentRow, col: currentCol } = currentPosition;
+            return (Math.abs(row - currentRow) + Math.abs(col - currentCol) === 1) && row >= 0 && row < rows && col >= 0 && col < cols;
+        }
+
+        function updateMessage(text) {
+            document.getElementById('message').textContent = text;
+        }
+
+        function updateAttemptCount() {
+            document.getElementById('attempt-count').textContent = `挑戦回数: ${attemptCount}`;
+        }
+
+        function retry() {
+            currentPosition = { row: 0, col: 0 };
+            gameOver = false;
+            attemptCount++;
+            updateAttemptCount();
+            renderBoard();
+            updateMessage('再挑戦開始！カタツムリをクリックして動かしてください。');
+            document.getElementById('retry').style.display = 'none';
+        }
+
+        function revealAllMonsters() {
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (board[i][j]) {
+                        revealedMonsters[i][j] = true;
+                    }
+                }
+            }
+        }
+
+        document.getElementById('restart').addEventListener('click', initializeGame);
+        document.getElementById('retry').addEventListener('click', retry);
+
+        initializeGame();
+    </script>
+</body>
+</html>
