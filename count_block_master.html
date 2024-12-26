@@ -154,6 +154,7 @@
 <!-- ■■■ 結果画面 ■■■ -->
 <div id="result-screen" class="screen">
   <h2>結果発表</h2>
+  <p>難易度: <span id="difficulty-mode"></span></p>
   <p>タイム: <span id="final-time"></span> 秒</p>
   <button id="btn-back-top">TOPに戻る</button>
 </div>
@@ -320,6 +321,7 @@ const btnHard      = document.getElementById('btn-hard');
 const waitMessage  = document.getElementById('wait-message');
 const btnStartGame = document.getElementById('btn-start-game');
 
+const difficultyMode = document.getElementById('difficulty-mode');
 const questionCounter = document.getElementById('question-counter');
 const timerLabel      = document.getElementById('timer-label');
 const answerInput     = document.getElementById('answer-input');
@@ -344,16 +346,19 @@ function showScreen(elem) {
  *  (C-1) トップ画面でモード選択
  * ---------------------------------------------------------------------------------------- */
 btnEasy.addEventListener('click', () => {
+  difficultyMode.textContent = "Easy";
   gameMode = { num_x:3, num_y:3, max_z:3 };
   showScreen(waitScreen);
   prepareProblems();
 });
 btnMedium.addEventListener('click', () => {
+  difficultyMode.textContent = "Medium";
   gameMode = { num_x:4, num_y:4, max_z:4 };
   showScreen(waitScreen);
   prepareProblems();
 });
 btnHard.addEventListener('click', () => {
+  difficultyMode.textContent = "Hard";
   gameMode = { num_x:5, num_y:5, max_z:5 };
   showScreen(waitScreen);
   prepareProblems();
