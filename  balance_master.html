@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Balance Game - Final Integrated</title>
+  <style>
+    /* ページ切り替え用のコンテナ */
+    #page-top, #page-wait, #page-game, #page-result {
+      display: none;
+    }
+
+    /* ライフ(ハート)用 */
+    .heart {
+      color: red;
+      font-size: 24px;
+      margin-right: 5px;
+    }
+
+    /* ゲーム中のXマーク */
+    .x-mark {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 48px;
+      color: red;
+      font-weight: bold;
+      z-index: 9999;
+    }
+
+    /* 解答ボタンを横並び・大きめの正方形にする */
+    #answer-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin: 20px;
+    }
+    .answer-btn {
+      width: 60px;
+      height: 60px;
+      font-size: 24px;
+      text-align: center;
+      vertical-align: middle;
+      cursor: pointer;
+    }
+
+    /* 問題文を中央寄せ */
+    #question-text {
+      margin: 20px;
+      font-weight: bold;
+      font-size: large;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <!-- トップページ -->
+  <div id="page-top">
+    <h1>てんびん問題・タイムアタック</h1>
+    <p>ゲームモードを選択してください。</p>
+    <button id="btn-simple">Simple</button>
+    <button id="btn-complex">Complex</button>
+  </div>
+
+  <!-- 待機画面 -->
+  <div id="page-wait">
+    <h1 id="wait-title">画像生成中...</h1>
+    <button id="btn-start" disabled>START</button>
+  </div>
+
+  <!-- ゲーム画面 -->
+  <div id="page-game">
+    <div>
+      <span id="question-number"></span>
+      <span id="time-elapsed"></span>
+      <span id="lives"></span>
+    </div>
+    <div style="position: relative;">
+      <img id="balance-image" src="" alt="Balance Image"
+           style="max-width: 800px; display: block; margin: 20px auto;" />
+      <div id="x-mark-container" style="position: absolute; top: 0; left: 0; 
+        width: 100%; height: 100%; pointer-events: none;"></div>
+    </div>
+    <div id="question-text"></div>
+    <div id="answer-buttons"></div>
+  </div>
+
+  <!-- 結果画面 -->
+  <div id="page-result">
+    <h1 id="result-message"></h1>
+    <p id="result-detail"></p>
+    <button id="btn-back">トップに戻る</button>
+  </div>
+
+  <script>
+    // =====================================================
+    // 1) モデルクラス & ユーティリティ
+    // =====================================================
+
+    class BalanceInfo {
+      constructor(left, right, isLeftHeavy) {
+        this.left = left;
+        this.right = right;
+        this.isLeftHeavy = isLeftHeavy;
+      }
+    }
+
+    // Easy 問題クラス
+    class BalanceProblemEasy {
+      constructor(numWeights, balanceInfos, answerLightest, answer, result) {
+        this.numWeights = numWeights;
+        this.balanceInfos = balanceInfos;
+        this.answerLightest = answerLightest; // true => 一番軽い、false => 一番重い
+        this.answer = answer;   // 1..n or 0=>? or -1=>×
+        this.result = result;   // ex) [2,3,0,1]
+
+        this.questionText = answerLightest
+          ? "一番軽いのはどれ？"
+          : "一番重いのはどれ？";
+      }
+    }
+
+    // Hard 問題クラス
+    class BalanceProblemHard {
+      constructor(numWeights, balanceInfos, answerIndex, answer, result) {
+        this.numWeights = numWeights;
+        this.balanceInfos = balanceInfos;
+        this.answerIndex = answerIndex; 
+        this.answer = answer;  // 1..n or 0=>? or -1=>×
+        this.result = result;
+
+        // answerIndexに応じて問題文を作る
+        // 例: 0 => 一番軽いのはどれ？
+        //     1 => 二番目に軽いのはどれ？
+        //     n-2 => 二番目に重いのはどれ？
+        //     n-1 => 一番重いのはどれ？
+        // 他は拡張次第
+        if (answerIndex === 0) {
+          this.questionText = "一番軽いのはどれ？";
+        } else if (answerIndex === this.numWeights - 1) {
+          this.questionText = "一番重いのはどれ？";
+        } else if (answerIndex === 1) {
+          this.questionText = "二番目に軽いのはどれ？";
+        } else if (answerIndex === this.numWeights - 2) {
+          this.questionText = "二番目に重いのはどれ？";
+        } else {
+          // ここでは簡易的に
+          this.questionText = `${answerIndex + 1}番目に軽いのはどれ？`;
+        }
+      }
+    }
+
+    // Python の solve_by_brute_force 相当
+    function solveByBruteForce(numWeights, balanceInfoList) {
+      // 全順列を取る
+      const weightsArr = [];
+      for (let w = 1; w <= numWeights; w++) {
+        weightsArr.push(w);
+      }
+      const allPerms = permutations(weightsArr); 
+
+      const candidates = [];
+      for (const p of allPerms) {
+        // p[i] => i番目に軽い(0始まり)
+        const weightToIndex = new Map();
+        p.forEach((w, idx) => {
+          weightToIndex.set(w, idx);
+        });
+
+        let isCandidate = true;
+        for (const bi of balanceInfoList) {
+          const leftIdx = weightToIndex.get(bi.left);
+          const rightIdx = weightToIndex.get(bi.right);
+          // 左が重い => leftIdx > rightIdx
+          if (bi.isLeftHeavy && leftIdx <= rightIdx) {
+            isCandidate = false;
+            break;
+          }
+          // 右が重い => rightIdx > leftIdx
+          if (!bi.isLeftHeavy && rightIdx <= leftIdx) {
+            isCandidate = false;
+            break;
+          }
+        }
+        if (isCandidate) {
+          candidates.push(p);
+        }
+      }
+
+      if (candidates.length === 0) {
+        return Array(numWeights).fill(-1);
+      }
+      if (candidates.length === 1) {
+        return candidates[0];
+      }
+
+      // 複数候補 => 順位ごとに一意かチェック
+      const result = [];
+      for (let i = 0; i < numWeights; i++) {
+        const setW = new Set();
+        for (const c of candidates) {
+          setW.add(c[i]);
+        }
+        if (setW.size === 1) {
+          result.push([...setW][0]);  // 一意
+        } else {
+          result.push(0);            // 複数
+        }
+      }
+      return result;
+    }
+
+    // permutations: 配列の全順列を返す
+    function permutations(arr) {
+      if (arr.length <= 1) return [arr.slice()];
+      const result = [];
+      for (let i=0; i < arr.length; i++){
+        const first = arr[i];
+        const rest = [...arr.slice(0,i), ...arr.slice(i+1)];
+        const subPerms = permutations(rest);
+        for (const sp of subPerms) {
+          result.push([first, ...sp]);
+        }
+      }
+      return result;
+    }
+
+    // generateBalanceProblemRaw
+    function generateBalanceProblemRaw(numWeights=4, numBalanceInfos=4) {
+      // 1..numWeights から2個ずつの組み合わせ
+      const allPairs = combinations(range(1, numWeights+1), 2);
+      // ランダムに numBalanceInfos個
+      const selectedPairs = sample(allPairs, numBalanceInfos);
+
+      const balanceInfos = [];
+      for (const pair of selectedPairs) {
+        let [l, r] = pair;
+        if (Math.random() < 0.5) {
+          [l, r] = [r, l];
+        }
+        const isLeftHeavy = (Math.random() < 0.5);
+        balanceInfos.push(new BalanceInfo(l, r, isLeftHeavy));
+      }
+      return { numWeights, balanceInfos };
+    }
+
+    // combinations (arr から k個取り出す)
+    function combinations(arr, k) {
+      const result = [];
+      function backtrack(start, combo) {
+        if (combo.length === k) {
+          result.push([...combo]);
+          return;
+        }
+        for (let i=start; i < arr.length; i++){
+          combo.push(arr[i]);
+          backtrack(i+1, combo);
+          combo.pop();
+        }
+      }
+      backtrack(0, []);
+      return result;
+    }
+
+    // range(start, end)
+    function range(start, end) {
+      const res = [];
+      for (let i=start; i<end; i++){
+        res.push(i);
+      }
+      return res;
+    }
+
+    // sample(arr, k)
+    function sample(arr, k) {
+      if (k>arr.length) throw new Error("sample size too large");
+      const copy = arr.slice();
+      const out = [];
+      for (let i=0; i<k; i++){
+        const idx = Math.floor(Math.random() * copy.length);
+        out.push(copy[idx]);
+        copy.splice(idx, 1);
+      }
+      return out;
+    }
+
+    // Easyモード問題生成
+    function generateBalanceProblemsEasy(numProblems=10, numWeights=4, numBalanceInfos=4) {
+      const problems = [];
+      while (problems.length < numProblems) {
+        const answerLightest = (Math.random() < 0.5);
+        const {numWeights:nw, balanceInfos:bi} = generateBalanceProblemRaw(numWeights, numBalanceInfos);
+        const result = solveByBruteForce(nw, bi);
+
+        if (answerLightest) {
+          const ans = result[0];
+          if (ans > 0) {
+            problems.push(new BalanceProblemEasy(nw, bi, true, ans, result));
+          }
+        } else {
+          const ans = result[nw-1];
+          if (ans > 0) {
+            problems.push(new BalanceProblemEasy(nw, bi, false, ans, result));
+          }
+        }
+      }
+      return problems;
+    }
+
+    // Hardモード問題生成
+    function generateBalanceProblemsHard(numProblems=10, numWeights=4, numBalanceInfos=4) {
+      const problems = [];
+      for (let i=0; i<numProblems; i++){
+        const answerIndex = Math.floor(Math.random()*numWeights);
+        const {numWeights:nw, balanceInfos:bi} = generateBalanceProblemRaw(numWeights, numBalanceInfos);
+        const result = solveByBruteForce(nw, bi);
+
+        const ans = result[answerIndex];
+        problems.push(new BalanceProblemHard(nw, bi, answerIndex, ans, result));
+      }
+      return problems;
+    }
+
+
+    // =====================================================
+    // 2) Canvasで天秤を描画 (最終修正)
+    // =====================================================
+
+    // ID -> 記号
+    const SHAPE_MARKERS = {
+      1: "○", 
+      2: "△", 
+      3: "▢", 
+      4: "☆"
+    };
+    // 記号ごとのテキスト描画オフセット(ピクセル) (皿の下辺基準)
+    const SHAPE_TEXT_OFFSET = {
+      1: 5,   // ○
+      2: 16,  // △
+      3: 4,   // ▢
+      4: 8    // ☆
+    };
+
+    /**
+     * 単一の天秤をCanvasに描画する
+     * - 支点は上向き三角形
+     * - 竿の端から上方向に棒→皿(U字)
+     * - 記号は皿下辺を基準に若干下げる
+     */
+    function drawSingleBalance(ctx, leftId, rightId, isLeftHeavy, offsetX, offsetY, scale) {
+      // 左重い => -15度, 右重い => +15度
+      const angleDeg = isLeftHeavy ? -15 : 15;
+      const angleRad = (angleDeg * Math.PI) / 180;
+
+      function rotate(x, y, theta) {
+        const rx = x * Math.cos(theta) - y * Math.sin(theta);
+        const ry = x * Math.sin(theta) + y * Math.cos(theta);
+        return [rx, ry];
+      }
+
+      ctx.save();
+      ctx.translate(offsetX, offsetY);
+      ctx.scale(scale, scale);
+
+      // 竿
+      const [leftX, leftY]   = rotate(-1, 0, angleRad);
+      const [rightX, rightY] = rotate( 1, 0, angleRad);
+
+      // 上向き三角形(支点)
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-0.2, 0.2);
+      ctx.lineTo( 0.2, 0.2);
+      ctx.closePath();
+      ctx.fillStyle = "gray";
+      ctx.fill();
+
+      // 竿
+      ctx.beginPath();
+      ctx.moveTo(leftX, leftY);
+      ctx.lineTo(rightX, rightY);
+      ctx.strokeStyle = "black";
+      ctx.lineWidth   = 6 / scale;
+      ctx.stroke();
+
+      function drawPan(rodX, rodY, shapeId) {
+        // 短い棒
+        const shortBarLen = 0.2;
+        const topX = rodX;
+        const topY = rodY - shortBarLen;
+
+        ctx.beginPath();
+        ctx.moveTo(rodX, rodY);
+        ctx.lineTo(topX, topY);
+        ctx.stroke();
+
+        // 皿(U字)
+        const plateWidth  = 0.6;
+        const plateHeight = 0.2;
+        const bottomY = topY;
+        const topOfPlateY = bottomY - plateHeight;
+
+        const leftEdgeX  = topX - plateWidth/2;
+        const rightEdgeX = topX + plateWidth/2;
+
+        ctx.beginPath();
+        // 下辺
+        ctx.moveTo(leftEdgeX,  bottomY);
+        ctx.lineTo(rightEdgeX, bottomY);
+        // 右縦線
+        ctx.lineTo(rightEdgeX, topOfPlateY);
+        // 左縦線
+        ctx.moveTo(leftEdgeX,  bottomY);
+        ctx.lineTo(leftEdgeX,  topOfPlateY);
+
+        ctx.strokeStyle = "black";
+        ctx.stroke();
+
+        // 記号
+        const marker = SHAPE_MARKERS[shapeId] || "?";
+
+        // 皿の下辺を基準にテキストBaseline=bottom
+        const textX = topX;
+        const textY = bottomY;  
+        const offsetPx = SHAPE_TEXT_OFFSET[shapeId] || 0;
+        const finalTextY = textY + (offsetPx / scale);
+
+        ctx.font = `${120/scale}px sans-serif`;
+        ctx.fillStyle = "black";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+
+        ctx.fillText(marker, textX, finalTextY);
+      }
+
+      // 左皿 & 右皿
+      drawPan(leftX, leftY,  leftId);
+      drawPan(rightX, rightY, rightId);
+
+      ctx.restore();
+    }
+
+    /**
+     * 4つの BalanceInfo を2×2配置し、Canvasに描画→Base64を返す
+     */
+    function createBalanceCanvasImage(balances) {
+      if (balances.length !== 4) {
+        throw new Error("balancesの要素数は4つである必要があります。");
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = 1600;
+      canvas.height = 1200;
+      const ctx = canvas.getContext("2d");
+
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let i=0; i<4; i++) {
+        const row = Math.floor(i/2);
+        const col = i % 2;
+        // 2×2配置
+        const offsetX = col*800 + 400;
+        const offsetY = row*600 + 300;
+        const scale = 300;
+
+        drawSingleBalance(
+          ctx,
+          balances[i].left,
+          balances[i].right,
+          balances[i].isLeftHeavy,
+          offsetX,
+          offsetY,
+          scale
+        );
+      }
+      return canvas.toDataURL("image/png");
+    }
+
+    // =====================================================
+    // 3) ゲームロジック
+    // =====================================================
+
+    let currentQuestionIndex = 0;   
+    const totalQuestions = 10;      
+    let lives = 3;                 
+    let mode = "";                 // "Simple"/"Complex"
+    let startTime = 0;            
+    let timerInterval = null;     
+    let problems = [];            // 生成した問題(配列)
+    let currentProblem = null;    // 今の問題
+
+    const pageTop      = document.getElementById("page-top");
+    const pageWait     = document.getElementById("page-wait");
+    const pageGame     = document.getElementById("page-game");
+    const pageResult   = document.getElementById("page-result");
+
+    const waitTitle    = document.getElementById("wait-title");
+    const btnSimple    = document.getElementById("btn-simple");
+    const btnComplex   = document.getElementById("btn-complex");
+    const btnStart     = document.getElementById("btn-start");
+    const btnBack      = document.getElementById("btn-back");
+
+    const questionNumberElem = document.getElementById("question-number");
+    const timeElapsedElem    = document.getElementById("time-elapsed");
+    const livesElem          = document.getElementById("lives");
+    const balanceImage       = document.getElementById("balance-image");
+    const questionText       = document.getElementById("question-text");
+    const answerButtons      = document.getElementById("answer-buttons");
+    const resultMessage      = document.getElementById("result-message");
+    const resultDetail       = document.getElementById("result-detail");
+    const xMarkContainer     = document.getElementById("x-mark-container");
+
+    window.addEventListener("load", () => {
+      showPage("top");
+    });
+
+    function showPage(page) {
+      pageTop.style.display    = (page === "top")    ? "block" : "none";
+      pageWait.style.display   = (page === "wait")   ? "block" : "none";
+      pageGame.style.display   = (page === "game")   ? "block" : "none";
+      pageResult.style.display = (page === "result") ? "block" : "none";
+    }
+
+    btnSimple.addEventListener("click", () => {
+      mode = "Simple";
+      goToWaitPage();
+    });
+    btnComplex.addEventListener("click", () => {
+      mode = "Complex";
+      goToWaitPage();
+    });
+
+    function goToWaitPage() {
+      showPage("wait");
+      btnStart.disabled = true;
+      waitTitle.textContent = "画像生成中...";
+
+      // モードに応じて問題10問を作成
+      // ここでは numWeights=4, numBalanceInfos=4 で固定
+      if (mode === "Simple") {
+        problems = generateBalanceProblemsEasy(10, 4, 4);
+      } else {
+        problems = generateBalanceProblemsHard(10, 4, 4);
+      }
+      
+      // 画像生成 → ここでは最初の問題だけ事前に生成しておいてもOKだし、
+      // 実は複数問題分の balanceInfos をまとめて描画する場合は工夫が必要。
+      // ただ、サンプルではシンプルに「最初の問題だけ描画する」フローにします。
+
+      // 1秒待って "準備完了"
+      setTimeout(() => {
+        waitTitle.textContent = "準備完了";
+        btnStart.disabled = false;
+      }, 1000);
+    }
+
+    btnStart.addEventListener("click", () => {
+      showPage("game");
+      startGame();
+    });
+
+    function startGame() {
+      currentQuestionIndex = 0;
+      lives = 3;
+      startTime = Date.now();
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+      timerInterval = setInterval(updateTimer, 100);
+      showQuestion();
+    }
+
+    function updateTimer() {
+      const now = Date.now();
+      const elapsed = (now - startTime) / 1000;
+      timeElapsedElem.textContent = `Time: ${elapsed.toFixed(2)}s`;
+    }
+
+    function showQuestion() {
+      questionNumberElem.textContent = `問題 ${currentQuestionIndex + 1} / ${totalQuestions}`;
+      updateLivesDisplay();
+
+      currentProblem = problems[currentQuestionIndex];
+      questionText.textContent = currentProblem.questionText;
+
+      // balanceInfos は4つ確定(ゲーム上は4個の天秤)
+      const balances = currentProblem.balanceInfos;
+      const dataUrl = createBalanceCanvasImage(balances);
+      balanceImage.src = dataUrl;
+
+      // Simpleモード => 4種類ボタン, Complexモード => 6種類ボタン
+      answerButtons.innerHTML = "";
+      let choices;
+      if (mode === "Simple") {
+        choices = ["◯","△","▢","☆"];
+      } else {
+        choices = ["◯","△","▢","☆","？","×"];
+      }
+
+      // correct answer のSymbol
+      const correctSymbol = mapAnswerIDtoSymbol(currentProblem.answer);
+
+      // ここでユーザーの選択を確認
+      choices.forEach(symbol => {
+        const btn = document.createElement("button");
+        btn.classList.add("answer-btn");
+        btn.textContent = symbol;
+        btn.addEventListener("click", () => {
+          checkAnswer(symbol, correctSymbol);
+        });
+        answerButtons.appendChild(btn);
+      });
+    }
+
+    // answer = 1..4 => SHAPE_MARKERS, 0 => "？", -1 => "×"
+    function mapAnswerIDtoSymbol(answer) {
+      if (answer === 0)  return "？";  // 不確定
+      if (answer === -1) return "×";  // 矛盾
+      return SHAPE_MARKERS[answer] || "?";
+    }
+
+    function checkAnswer(choice, correct) {
+      if (choice === correct) {
+        // 正解
+        currentQuestionIndex++;
+        if (currentQuestionIndex >= totalQuestions) {
+          endGame(true);
+        } else {
+          showQuestion();
+        }
+      } else {
+        // 不正解
+        showWrongAnswer();
+      }
+    }
+
+    function showWrongAnswer() {
+      const xMark = document.createElement("div");
+      xMark.classList.add("x-mark");
+      xMark.textContent = "X";
+      xMarkContainer.appendChild(xMark);
+
+      setTimeout(() => {
+        xMarkContainer.removeChild(xMark);
+        lives--;
+        if (lives <= 0) {
+          endGame(false);
+        } else {
+          showQuestion();
+        }
+      }, 1000);
+    }
+
+    function updateLivesDisplay() {
+      livesElem.innerHTML = "";
+      for (let i=0; i<lives; i++){
+        const heart = document.createElement("span");
+        heart.classList.add("heart");
+        heart.textContent = "♥";
+        livesElem.appendChild(heart);
+      }
+    }
+
+    function endGame(isClear) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+      showPage("result");
+      if (isClear) {
+        const totalTime = ((Date.now() - startTime)/1000).toFixed(2);
+        resultMessage.textContent = "全問正解！";
+        resultDetail.textContent = `モード：${mode}    タイム：${totalTime}秒`;
+      } else {
+        resultMessage.textContent = "ゲームオーバー…";
+        resultDetail.textContent = "";
+      }
+    }
+
+    btnBack.addEventListener("click", () => {
+      showPage("top");
+      mode = "";
+      lives = 3;
+      currentQuestionIndex = 0;
+      clearInterval(timerInterval);
+      timerInterval = null;
+      resultMessage.textContent = "";
+      resultDetail.textContent = "";
+    });
+  </script>
+</body>
+</html>
